@@ -1,4 +1,4 @@
-const CACHE_NAME = "abstinence-timer-v2";
+const CACHE_NAME = "abstinence-timer-v3";
 
 const FILES_TO_CACHE = [
   "./",
@@ -32,12 +32,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request);
-    })
-  );
-});
   event.respondWith(
     caches.match(event.request).then((cached) => {
       return cached || fetch(event.request);

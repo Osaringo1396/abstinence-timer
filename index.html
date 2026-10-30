@@ -113,6 +113,11 @@ summary{cursor:pointer;font-weight:800;color:var(--gold2);font-size:14px;padding
 .dm b{color:var(--gold2)}
 .dm span{display:block;color:var(--sub);font-size:12px;line-height:1.5}
 .dm.lk{opacity:.5}
+#backup-actions{display:grid;gap:10px}
+#backup-actions button,#backup-import-label{display:block;width:100%;padding:12px;border-radius:8px;border:1px solid var(--gold);background:transparent;color:var(--gold2);font:inherit;font-size:13px;font-weight:900;letter-spacing:.1em;text-align:center;cursor:pointer}
+#backup-actions button{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#120d00;border:0}
+#backup-status{min-height:1.5em;margin:12px 0 0;font-size:12px;line-height:1.5;color:var(--sub)}
+#backup-status[data-error="true"]{color:#ff7b82}
 #shop.on{display:flex;animation:fade .25s}
 .shbox{width:100%;max-width:480px;max-height:88vh;overflow:auto;background:#12141a;border:1px solid var(--gold);border-radius:16px 16px 0 0;padding:16px 16px calc(18px + env(safe-area-inset-bottom,0px))}
 .shh{display:flex;justify-content:space-between;align-items:center;color:var(--gold);font-weight:800;letter-spacing:.2em;font-size:13px;margin-bottom:8px}
@@ -182,6 +187,15 @@ body[data-bg="2"]::after,body[data-bg="4"]::after,body[data-bg="6"]::after{opaci
   <h2>称号</h2>
   <ul id="list"></ul>
 </div>
+<div class="card">
+  <h2>データ管理</h2>
+  <div class="sub" style="text-align:left;line-height:1.6;margin-bottom:12px">記録・ペット・設定をJSONファイルへ保存できます。復元すると、現在のデータはバックアップの内容に置き換わります。</div>
+  <div id="backup-actions">
+    <button id="backup-export" type="button">バックアップを作成・保存</button>
+    <label id="backup-import-label" for="backup-import">バックアップから復元<input id="backup-import" type="file" accept="application/json,.json" hidden></label>
+  </div>
+  <p id="backup-status" role="status" aria-live="polite"></p>
+</div>
 </main>
 <div id="pet" role="button"><div class="pb" id="pB"></div><div class="pe" id="pE">🥚</div><div class="pn" id="pN">…</div><div class="pc" id="pC">🪙 0</div></div>
 <div id="shop"><div class="shbox"><div class="shh"><span>ペットの世話</span><button id="shX">閉じる</button></div><div class="spet"><div class="pe2" id="sE"></div><div id="sN"></div><div class="nrow"><button id="nbtn"></button><span id="nform" style="display:none"><input id="nin" maxlength="8" placeholder="なまえ" autocomplete="off"> <button id="nok">決定</button> <button id="nno">戻る</button></span></div><div class="sub" id="sP"></div><div class="sub" id="sT"></div></div><div class="coin" id="sC"></div><div class="foods" id="foods"></div><div class="sub" id="sM"></div><button id="evo">進化させる</button><button id="dexb">📖 モンスター図鑑</button></div></div>
@@ -213,6 +227,48 @@ function push(){if(!DOC)return;DOC.set({start:S.start,best:S.best,seen:S.seen,go
 function persist(){S.updatedAt=Date.now();save();push()}
 function apply(r){S.start=r.start||null;S.best=+r.best||0;S.seen=+r.seen||0;S.goal=String(r.goal||"").slice(0,10);S.bank=+r.bank||0;S.spent=+r.spent||0;S.pet=cleanPet(r.pet);S.updatedAt=+r.updatedAt||0;save();if(S.goal)closeSetup();render()}
 const $=id=>document.getElementById(id);
+
+/* backup and restore */
+const BACKUP_VERSION=1,BACKUP_KEYS=["abst-timer","abst-dev","abst-bgm"];
+const plainObject=v=>v!==null&&typeof v==="object"&&!Array.isArray(v);
+const finiteNumber=v=>typeof v==="number"&&Number.isFinite(v);
+function backupStatus(message,error=false){const el=$("backup-status");el.textContent=message;el.dataset.error=String(error)}
+function validTimer(value){
+  if(!plainObject(value)||!finiteNumber(value.best)||!finiteNumber(value.seen)||typeof value.mute!=="boolean"||typeof value.goal!=="string"||!finiteNumber(value.bank)||!finiteNumber(value.spent)||!finiteNumber(value.updatedAt)||!plainObject(value.pet))return false;
+  if((value.start!==null&&!finiteNumber(value.start))||!Array.isArray(value.pet.dx)||!value.pet.dx.every(v=>typeof v==="string")||!plainObject(value.pet.f))return false;
+  return Object.values(value.pet.f).every(finiteNumber);
+}
+function validDev(value){
+  if(!plainObject(value))return false;
+  const types={font:"number",bgm:"number",back:"number",vol:"number"};
+  return Object.entries(types).every(([key,type])=>!(key in value)||typeof value[key]===type)&&(!("pu" in value)||value.pu===null||finiteNumber(value.pu));
+}
+function parseBackup(raw){
+  let backup;try{backup=JSON.parse(raw)}catch(e){throw new Error("JSONファイルとして読み取れませんでした。")}
+  if(!plainObject(backup)||backup.app!=="abstinence-timer"||backup.version!==BACKUP_VERSION||typeof backup.createdAt!=="string"||Number.isNaN(Date.parse(backup.createdAt))||!plainObject(backup.storage))throw new Error("このファイルは対応していないバックアップ形式です。");
+  for(const key of BACKUP_KEYS)if(typeof backup.storage[key]!=="string")throw new Error("バックアップに必要なデータがありません。");
+  let timer,dev;try{timer=JSON.parse(backup.storage["abst-timer"]);dev=JSON.parse(backup.storage["abst-dev"])}catch(e){throw new Error("記録または設定のデータが正しくありません。")}
+  if(!validTimer(timer)||!validDev(dev)||(backup.storage["abst-bgm"]!=="0"&&backup.storage["abst-bgm"]!=="1"))throw new Error("バックアップ内のデータ形式が正しくありません。");
+  return backup;
+}
+function makeBackup(){
+  const defaults={"abst-timer":JSON.stringify(S),"abst-dev":JSON.stringify(DEV),"abst-bgm":"0"},storage={};
+  for(const key of BACKUP_KEYS)storage[key]=localStorage.getItem(key)??defaults[key];
+  return parseBackup(JSON.stringify({app:"abstinence-timer",version:BACKUP_VERSION,createdAt:new Date().toISOString(),storage}));
+}
+function exportBackup(){try{
+  const backup=makeBackup(),blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),link=document.createElement("a"),stamp=backup.createdAt.replace(/[:.]/g,"-").replace("T","_").replace("Z","");
+  link.href=url;link.download="abstinence-timer-backup_"+stamp+".json";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  backupStatus("バックアップを作成しました。iCloud Driveなど、アプリ外にも保管してください。");
+}catch(e){backupStatus("バックアップを作成できませんでした: "+e.message,true)}}
+async function importBackup(file){try{
+  if(!file)return;if(file.size>1024*1024)throw new Error("ファイルが大きすぎます（1MBまで）。");
+  const backup=parseBackup(await file.text()),date=new Date(backup.createdAt).toLocaleString("ja-JP");
+  if(!confirm("このバックアップ（作成日時: "+date+"）を復元しますか？\n\n現在のタイマー・ペット・設定・BGMは、この内容に置き換わります。先に現在のデータをバックアップすることをおすすめします。")){backupStatus("復元を取り消しました。");return}
+  const previous={};for(const key of BACKUP_KEYS)previous[key]=localStorage.getItem(key);
+  try{for(const key of BACKUP_KEYS)localStorage.setItem(key,backup.storage[key])}catch(e){for(const key of BACKUP_KEYS){if(previous[key]===null)localStorage.removeItem(key);else localStorage.setItem(key,previous[key])}throw new Error("保存に失敗したため、元のデータへ戻しました。")}
+  backupStatus("復元しました。アプリを再読み込みします。");setTimeout(()=>location.reload(),600);
+}catch(e){backupStatus("復元できませんでした: "+e.message,true)}}
 
 /* sound */
 let AC=null;
@@ -409,6 +465,8 @@ confirmSteps($("stop"),"ストップ",["本当に停止する？","努力が途�
 confirmSteps($("resetbest"),"最長記録をリセット",["本当にリセット？もう一度"],8000,()=>{S.best=0;S.seen=cnt(elapsed());persist();render()});
 $("bgm").onclick=()=>{bgmWant=!bgmWant;try{localStorage.setItem("abst-bgm",bgmWant?"1":"0")}catch(e){}bgmWant?bgmStart():bgmStop();render()};
 $("mute").onclick=()=>{S.mute=!S.mute;save();render();if(!S.mute)snd.click()};
+$("backup-export").onclick=exportBackup;
+$("backup-import").onchange=e=>{importBackup(e.target.files[0]);e.target.value=""};
 function rot(id,arr,ms){const el=$(id);let i=Math.floor(Math.random()*arr.length);const f=()=>{el.style.opacity=0;setTimeout(()=>{el.textContent=arr[i++%arr.length];el.style.opacity=1},500)};f();setInterval(f,ms)}
 applyDev();setTimeout(maybeSetup,2500);rot("motto",MOTTOS,8000);rot("urge",URGES,10000);
 render();setInterval(render,1000);
